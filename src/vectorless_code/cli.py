@@ -134,6 +134,44 @@ def ask(
     typer.echo("(placeholder — not yet connected to vectorless)")
 
 
+@app.command()
+def status() -> None:
+    """Show compilation status and index statistics."""
+    project_root = _require_project_root()
+    settings_file = _project_settings_path(project_root)
+    index_dir = project_root / _SETTINGS_DIR_NAME
+
+    typer.echo(f"Project:  {project_root}")
+    typer.echo(f"Settings: {settings_file}")
+
+    # Check settings
+    if settings_file.is_file():
+        typer.echo(f"Settings: [OK]")
+    else:
+        typer.echo("Settings: [MISSING]")
+        return
+
+    # Check index data
+    data_dir = index_dir / "data"
+    if not data_dir.is_dir():
+        typer.echo("\nNot compiled yet. Run `vcc compile` to build the index.")
+        return
+
+    # Count index files
+    index_files = list(data_dir.iterdir()) if data_dir.exists() else []
+    if not index_files:
+        typer.echo("\nIndex is empty. Run `vcc compile` to build the index.")
+        return
+
+    typer.echo(f"Index:    {data_dir} ({len(index_files)} files)")
+
+    # Placeholder stats — will be populated when connected to vectorless
+    typer.echo("\nIndex stats:")
+    typer.echo("  Compiled: (placeholder — not yet connected to vectorless)")
+    typer.echo("  Files:    (placeholder)")
+    typer.echo("  Symbols:  (placeholder)")
+
+
 # ---------------------------------------------------------------------------
 # Default settings YAML content
 # ---------------------------------------------------------------------------

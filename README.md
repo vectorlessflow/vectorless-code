@@ -28,13 +28,14 @@ vcc ask "where is the authentication logic"
 | `vcc init` | Initialize project (creates `.vectorless_code/settings.yml`) |
 | `vcc compile` | Compile codebase into searchable index |
 | `vcc ask <question>` | Ask a question about the codebase |
+| `vcc status` | Show compilation status and index statistics |
 
 `vcc` is the short name. `vectorless-code` also works.
 
 
 ## Status
 
-Early development. The CLI skeleton (`init`, `compile`, `ask`) is in place. Core search engine coming soon.
+Early development. The CLI skeleton (`init`, `compile`, `ask`, `status`) is in place. Core search engine coming soon.
 
 ## License
 
