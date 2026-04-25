@@ -19,7 +19,7 @@ vectorless-code/
 │   ├── __main__.py             # python -m vectorless_code
 │   ├── cli.py                  # CLI commands (typer)
 │   ├── settings.py             # config management (planned)
-│   ├── indexer.py              # code compilation (planned)
+│   ├── compile.py              # code compilation (planned)
 │   ├── search.py               # search strategies (planned)
 │   ├── traversal.py            # LLM tree traversal (planned)
 │   ├── server.py               # MCP server (planned)

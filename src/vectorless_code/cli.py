@@ -81,10 +81,24 @@ def init() -> None:
 @app.command()
 def compile() -> None:  # noqa: A001 — name matches user-facing verb
     """Compile the codebase into a searchable index."""
+    from vectorless_code.compile import compile_project
+
     project_root = _require_project_root()
     typer.echo(f"Project: {project_root}")
-    typer.echo("Compiling codebase... (placeholder — not yet connected to vectorless)")
-    typer.echo("Done.")
+
+    result = compile_project(project_root)
+
+    if not result.ok:
+        typer.echo(f"Error: {result.error}", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Files:  {result.file_count}")
+    typer.echo(f"Lines:  {result.total_lines}")
+    typer.echo(f"Size:   {result.total_bytes} bytes")
+    if result.languages:
+        typer.echo("Languages:")
+        for lang, count in sorted(result.languages.items(), key=lambda x: -x[1]):
+            typer.echo(f"  {lang}: {count} files")
 
 
 @app.command()
