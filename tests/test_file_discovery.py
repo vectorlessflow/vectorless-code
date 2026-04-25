@@ -125,7 +125,7 @@ class TestIncludePatterns:
 
 
 class TestGitignore:
-    def test_respects_gitignore(self, tmp_path: Path) -> None:
+    def test_respects_root_gitignore(self, tmp_path: Path) -> None:
         _make_project(tmp_path, {
             "src/main.py": "pass",
             "src/generated.py": "# auto-generated",
@@ -154,6 +154,55 @@ class TestGitignore:
         settings = ProjectSettings()
         result = _discovered_names(tmp_path, settings)
         assert result == ["src/main.py"]
+
+    def test_nested_gitignore(self, tmp_path: Path) -> None:
+        """Subdirectory .gitignore is respected."""
+        _make_project(tmp_path, {
+            "src/main.py": "pass",
+            "src/gen/a.py": "# gen",
+            "src/gen/b.py": "# gen",
+        })
+        (tmp_path / "src" / "gen" / ".gitignore").write_text("*.py\n")
+        settings = ProjectSettings()
+        result = _discovered_names(tmp_path, settings)
+        assert result == ["src/main.py"]
+
+    def test_nested_gitignore_does_not_affect_parent(self, tmp_path: Path) -> None:
+        """Patterns in subdir .gitignore only apply within that dir."""
+        _make_project(tmp_path, {
+            "src/main.py": "pass",
+            "src/internal/secret.py": "pass",
+        })
+        # src/internal/.gitignore ignores *.py but only inside internal/
+        (tmp_path / "src" / "internal" / ".gitignore").write_text("*.py\n")
+        settings = ProjectSettings()
+        result = _discovered_names(tmp_path, settings)
+        assert result == ["src/main.py"]
+
+    def test_gitignore_directory_prune(self, tmp_path: Path) -> None:
+        """If a directory is gitignored, its contents are skipped entirely."""
+        _make_project(tmp_path, {
+            "src/main.py": "pass",
+            "build/a.py": "# build output",
+            "build/sub/b.py": "# nested build output",
+        })
+        (tmp_path / ".gitignore").write_text("build/\n")
+        settings = ProjectSettings()
+        result = _discovered_names(tmp_path, settings)
+        assert result == ["src/main.py"]
+
+    def test_root_and_nested_gitignore_combined(self, tmp_path: Path) -> None:
+        """Both root and nested gitignore rules apply together."""
+        _make_project(tmp_path, {
+            "src/main.py": "pass",
+            "src/helpers/old.py": "pass",
+            "src/helpers/new.py": "pass",
+        })
+        (tmp_path / ".gitignore").write_text("*.pyc\n")
+        (tmp_path / "src" / "helpers" / ".gitignore").write_text("old.py\n")
+        settings = ProjectSettings()
+        result = _discovered_names(tmp_path, settings)
+        assert result == ["src/helpers/new.py", "src/main.py"]
 
 
 # ---------------------------------------------------------------------------
