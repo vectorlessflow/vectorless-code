@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import typer
 
 from vectorless_code import __version__
+from vectorless_code.settings import (
+    add_to_gitignore,
+    data_dir,
+    find_project_root,
+    load_project_settings,
+    save_initial_settings,
+    settings_path,
+)
 
 app = typer.Typer(
     name="vcc",
@@ -32,34 +39,12 @@ def _global(
 
 
 # ---------------------------------------------------------------------------
-# Settings helpers (lightweight — no heavy imports)
+# Helpers
 # ---------------------------------------------------------------------------
-
-_SETTINGS_DIR_NAME = ".vectorless_code"
-_SETTINGS_FILE_NAME = "settings.yml"
-
-
-def _project_settings_path(root: Path) -> Path:
-    return root / _SETTINGS_DIR_NAME / _SETTINGS_FILE_NAME
-
-
-def _find_project_root(start: Path) -> Path | None:
-    """Walk up from *start* looking for ``.vectorless_code/settings.yml``."""
-    current = start.resolve()
-    home = Path.home().resolve()
-    while True:
-        if (current / _SETTINGS_DIR_NAME / _SETTINGS_FILE_NAME).is_file():
-            return current
-        if current == home:
-            return None
-        parent = current.parent
-        if parent == current:
-            return None
-        current = parent
 
 
 def _require_project_root() -> Path:
-    root = _find_project_root(Path.cwd())
+    root = find_project_root(Path.cwd())
     if root is None:
         typer.echo(
             "Error: not in an initialized project directory.\n"
@@ -68,25 +53,6 @@ def _require_project_root() -> Path:
         )
         raise typer.Exit(code=1)
     return root
-
-
-def _add_to_gitignore(project_root: Path) -> None:
-    """Add ``/.vectorless_code/`` to ``.gitignore`` if ``.git`` exists."""
-    if not (project_root / ".git").is_dir():
-        return
-    gitignore = project_root / ".gitignore"
-    entry = "/.vectorless_code/"
-    comment = "# vectorless-code"
-    if gitignore.is_file():
-        content = gitignore.read_text()
-        if entry in content.splitlines():
-            return
-        if content and not content.endswith("\n"):
-            content += "\n"
-        content += f"{comment}\n{entry}\n"
-        gitignore.write_text(content)
-    else:
-        gitignore.write_text(f"{comment}\n{entry}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -98,18 +64,16 @@ def _add_to_gitignore(project_root: Path) -> None:
 def init() -> None:
     """Initialize vectorless-code in the current project."""
     cwd = Path.cwd().resolve()
-    settings_file = _project_settings_path(cwd)
+    sfile = settings_path(cwd)
 
-    if settings_file.is_file():
+    if sfile.is_file():
         typer.echo("Project already initialized.")
         return
 
-    # Create .vectorless_code/settings.yml with defaults
-    settings_file.parent.mkdir(parents=True, exist_ok=True)
-    settings_file.write_text(_DEFAULT_SETTINGS_YAML)
-    typer.echo(f"Created project settings: {settings_file}")
+    path = save_initial_settings(cwd)
+    typer.echo(f"Created project settings: {path}")
 
-    _add_to_gitignore(cwd)
+    add_to_gitignore(cwd)
 
     typer.echo("Run `vcc compile` to build the code index.")
 
@@ -138,32 +102,22 @@ def ask(
 def status() -> None:
     """Show compilation status and index statistics."""
     project_root = _require_project_root()
-    settings_file = _project_settings_path(project_root)
-    index_dir = project_root / _SETTINGS_DIR_NAME
+    sfile = settings_path(project_root)
+    ddir = data_dir(project_root)
 
     typer.echo(f"Project:  {project_root}")
-    typer.echo(f"Settings: {settings_file}")
+    typer.echo(f"Settings: {sfile} [OK]")
 
-    # Check settings
-    if settings_file.is_file():
-        typer.echo(f"Settings: [OK]")
-    else:
-        typer.echo("Settings: [MISSING]")
-        return
-
-    # Check index data
-    data_dir = index_dir / "data"
-    if not data_dir.is_dir():
+    if not ddir.is_dir():
         typer.echo("\nNot compiled yet. Run `vcc compile` to build the index.")
         return
 
-    # Count index files
-    index_files = list(data_dir.iterdir()) if data_dir.exists() else []
+    index_files = [f for f in ddir.iterdir() if f.is_file()]
     if not index_files:
         typer.echo("\nIndex is empty. Run `vcc compile` to build the index.")
         return
 
-    typer.echo(f"Index:    {data_dir} ({len(index_files)} files)")
+    typer.echo(f"Index:    {ddir} ({len(index_files)} files)")
 
     # Placeholder stats — will be populated when connected to vectorless
     typer.echo("\nIndex stats:")
@@ -171,42 +125,6 @@ def status() -> None:
     typer.echo("  Files:    (placeholder)")
     typer.echo("  Symbols:  (placeholder)")
 
-
-# ---------------------------------------------------------------------------
-# Default settings YAML content
-# ---------------------------------------------------------------------------
-
-_DEFAULT_SETTINGS_YAML = """\
-# vectorless-code project settings
-# See https://vectorless.dev for documentation.
-
-# File patterns to include in the index.
-include_patterns:
-  - "**/*.py"
-  - "**/*.pyi"
-  - "**/*.js"
-  - "**/*.jsx"
-  - "**/*.ts"
-  - "**/*.tsx"
-  - "**/*.rs"
-  - "**/*.go"
-  - "**/*.java"
-  - "**/*.c"
-  - "**/*.h"
-  - "**/*.cpp"
-  - "**/*.hpp"
-
-# File patterns to exclude from the index.
-exclude_patterns:
-  - "**/.*"
-  - "**/__pycache__"
-  - "**/node_modules"
-  - "**/target"
-  - "**/build"
-  - "**/dist"
-  - "**/vendor"
-  - "**/.vectorless_code"
-"""
 
 # Allow running as module: python -m vectorless_code.cli
 if __name__ == "__main__":
