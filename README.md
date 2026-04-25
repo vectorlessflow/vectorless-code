@@ -1,15 +1,41 @@
 # vectorless-code
 
-Code-aware search and navigation engine, powered by `vectorless`.
+Code-aware search and navigation engine, powered by [`vectorless`](https://github.com/vectorlessflow/vectorless).
 
-- Navigate your codebase like a tree: `ls` / `cat` / `find` / `path`.
-- Search by natural language, without vector database.
-- Built on `vectorless`'s structure-based reasoning.
-
-Still under development. See `vectorless.dev` for background.
-
-Install:
+## Install
 
 ```bash
 pip install vectorless-code
 ```
+
+## Quick start
+
+```bash
+# Initialize in your project
+vcc init
+
+# Compile the codebase
+vcc compile
+
+# Search
+vcc ask "where is the authentication logic"
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `vcc init` | Initialize project (creates `.vectorless_code/settings.yml`) |
+| `vcc compile` | Compile codebase into searchable index |
+| `vcc ask <question>` | Ask a question about the codebase |
+
+`vcc` is the short name. `vectorless-code` also works.
+
+
+## Status
+
+Early development. The CLI skeleton (`init`, `compile`, `ask`) is in place. Core search engine coming soon.
+
+## License
+
+Apache-2.0
