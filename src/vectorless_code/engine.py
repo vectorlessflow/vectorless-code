@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 def create_engine(user_settings: UserSettings | None = None) -> Engine:
     """Create a vectorless Engine from settings.
 
-    Raises ``RuntimeError`` if no API key is configured.
+    Raises ``RuntimeError`` if required settings are missing.
     """
     from vectorless import Engine as _Engine
 
@@ -23,6 +23,18 @@ def create_engine(user_settings: UserSettings | None = None) -> Engine:
         raise RuntimeError(
             "VECTORLESS_API_KEY is not set. "
             "Run `vcc init` or set the VECTORLESS_API_KEY environment variable."
+        )
+
+    if not settings.model:
+        raise RuntimeError(
+            "VECTORLESS_MODEL is not set. "
+            "Run `vcc init` or set the VECTORLESS_MODEL environment variable."
+        )
+
+    if not settings.endpoint:
+        raise RuntimeError(
+            "VECTORLESS_ENDPOINT is not set. "
+            "Run `vcc init` or set the VECTORLESS_ENDPOINT environment variable."
         )
 
     return _Engine(

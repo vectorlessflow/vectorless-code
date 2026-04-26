@@ -19,6 +19,8 @@ from vectorless_code.settings import (
     settings_path,
 )
 
+_DEFAULT_MODEL = "gpt-4o"
+
 app = typer.Typer(
     name="vcc",
     help="vectorless-code — Code-aware search and navigation engine.",
@@ -60,10 +62,17 @@ def _require_project_root() -> Path:
 
 def _require_api_key(user_settings: UserSettings | None = None) -> UserSettings:
     settings = user_settings or load_user_settings()
+    missing = []
     if not settings.api_key:
+        missing.append("VECTORLESS_API_KEY")
+    if not settings.model:
+        missing.append("VECTORLESS_MODEL")
+    if not settings.endpoint:
+        missing.append("VECTORLESS_ENDPOINT")
+    if missing:
         typer.echo(
-            "Error: VECTORLESS_API_KEY is not set.\n"
-            "Run `vcc init` to configure it, or set the environment variable.",
+            f"Error: {' and '.join(missing)} not set.\n"
+            "Run `vcc init` to configure, or set the environment variables.",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -89,15 +98,30 @@ def init() -> None:
         add_to_gitignore(cwd)
         typer.echo("Run `vcc compile` to build the code index.")
 
-    # Check / prompt for API key
+    # Check / prompt for required settings
     user_settings = load_user_settings()
+
     if not user_settings.api_key:
         typer.echo("")
         api_key = typer.prompt("Enter your VECTORLESS_API_KEY", default="", show_default=False)
         if api_key:
             user_settings.api_key = api_key
-            saved = save_user_settings(user_settings)
-            typer.echo(f"API key saved to {saved}")
+
+    if not user_settings.model or user_settings.model == _DEFAULT_MODEL:
+        typer.echo("")
+        model = typer.prompt("Enter your VECTORLESS_MODEL", default=_DEFAULT_MODEL)
+        if model:
+            user_settings.model = model
+
+    if not user_settings.endpoint:
+        typer.echo("")
+        endpoint = typer.prompt("Enter your VECTORLESS_ENDPOINT", default="", show_default=False)
+        if endpoint:
+            user_settings.endpoint = endpoint
+
+    if user_settings.api_key or user_settings.endpoint:
+        saved = save_user_settings(user_settings)
+        typer.echo(f"Settings saved to {saved}")
 
 
 @app.command()

@@ -80,6 +80,11 @@ class UserSettings:
     model: str = _DEFAULT_MODEL
     endpoint: str | None = None
 
+    @property
+    def ready(self) -> bool:
+        """Check if all required fields are configured."""
+        return bool(self.api_key) and bool(self.model) and bool(self.endpoint)
+
 
 def load_user_settings() -> UserSettings:
     """Load user settings from disk, falling back to environment variables."""
@@ -106,8 +111,7 @@ def save_user_settings(settings: UserSettings) -> Path:
     data: dict[str, Any] = {"model": settings.model}
     if settings.api_key:
         data["api_key"] = settings.api_key
-    if settings.endpoint:
-        data["endpoint"] = settings.endpoint
+    data["endpoint"] = settings.endpoint or ""
     with open(_USER_SETTINGS_FILE, "w") as f:
         yaml.safe_dump(data, f, default_flow_style=False)
     return _USER_SETTINGS_FILE
