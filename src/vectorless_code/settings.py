@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,15 @@ from typing import Any
 import yaml
 
 # ---------------------------------------------------------------------------
-# Defaults
+# User-level defaults
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MODEL = "gpt-4o"
+_USER_SETTINGS_DIR = Path.home() / ".config" / "vectorless-code"
+_USER_SETTINGS_FILE = _USER_SETTINGS_DIR / "settings.yaml"
+
+# ---------------------------------------------------------------------------
+# Project-level defaults
 # ---------------------------------------------------------------------------
 
 DEFAULT_INCLUDED_PATTERNS: list[str] = [
@@ -61,6 +70,47 @@ DEFAULT_EXCLUDED_PATTERNS: list[str] = [
 class ProjectSettings:
     include_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_INCLUDED_PATTERNS))
     exclude_patterns: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDED_PATTERNS))
+
+
+@dataclass
+class UserSettings:
+    """User-level global configuration (~/.config/vectorless-code/settings.yaml)."""
+
+    api_key: str | None = None
+    model: str = _DEFAULT_MODEL
+    endpoint: str | None = None
+
+
+def load_user_settings() -> UserSettings:
+    """Load user settings from disk, falling back to environment variables."""
+    api_key = os.environ.get("VECTORLESS_API_KEY")
+    model = os.environ.get("VECTORLESS_MODEL", _DEFAULT_MODEL)
+    endpoint = os.environ.get("VECTORLESS_ENDPOINT")
+
+    if _USER_SETTINGS_FILE.is_file():
+        try:
+            with open(_USER_SETTINGS_FILE) as f:
+                data = yaml.safe_load(f) or {}
+            api_key = api_key or data.get("api_key")
+            model = data.get("model", model)
+            endpoint = endpoint or data.get("endpoint")
+        except OSError:
+            pass
+
+    return UserSettings(api_key=api_key, model=model, endpoint=endpoint)
+
+
+def save_user_settings(settings: UserSettings) -> Path:
+    """Write user settings YAML. Returns path written."""
+    _USER_SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    data: dict[str, Any] = {"model": settings.model}
+    if settings.api_key:
+        data["api_key"] = settings.api_key
+    if settings.endpoint:
+        data["endpoint"] = settings.endpoint
+    with open(_USER_SETTINGS_FILE, "w") as f:
+        yaml.safe_dump(data, f, default_flow_style=False)
+    return _USER_SETTINGS_FILE
 
 
 # ---------------------------------------------------------------------------
