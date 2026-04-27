@@ -254,3 +254,94 @@ def add_to_gitignore(project_root: Path) -> None:
         gitignore.write_text(content)
     else:
         gitignore.write_text(f"{_GITIGNORE_COMMENT}\n{_GITIGNORE_ENTRY}\n")
+
+
+# ---------------------------------------------------------------------------
+# Path normalization (for Docker and cross-platform support)
+# ---------------------------------------------------------------------------
+
+
+def _get_path_mappings() -> list[tuple[Path, Path]]:
+    """Parse VECTORLESS_HOST_PATH_MAPPING environment variable.
+
+    Format: /host/path:/container/path,/another:/another
+    Returns list of (host_path, container_path) tuples.
+    """
+    mapping_str = os.environ.get("VECTORLESS_HOST_PATH_MAPPING", "")
+    if not mapping_str:
+        return []
+
+    mappings: list[tuple[Path, Path]] = []
+    for pair in mapping_str.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        parts = pair.split(":")
+        if len(parts) != 2:
+            continue
+        host, container = parts
+        mappings.append((Path(host), Path(container)))
+
+    return mappings
+
+
+def normalize_path(path: str | Path) -> str:
+    """Normalize a path, applying host path mappings if configured.
+
+    This is used when the client receives a path from the user (host perspective)
+    and needs to send it to the daemon (container perspective).
+    """
+    p = Path(path).resolve()
+    mappings = _get_path_mappings()
+
+    for host_path, container_path in mappings:
+        try:
+            rel = p.relative_to(host_path)
+            return str(container_path / rel)
+        except ValueError:
+            # p is not relative to host_path
+            continue
+
+    return str(p)
+
+
+def get_host_path_mappings() -> list[tuple[Path, Path]]:
+    """Get the current path mappings for diagnostics."""
+    return _get_path_mappings()
+
+
+# ---------------------------------------------------------------------------
+# Global settings mtime (for daemon restart detection)
+# ---------------------------------------------------------------------------
+
+
+def global_settings_mtime_us() -> int | None:
+    """Return the mtime (microseconds) of the global settings file, or None."""
+    if not _USER_SETTINGS_FILE.is_file():
+        return None
+    try:
+        stat = _USER_SETTINGS_FILE.stat()
+        return int(stat.st_mtime * 1_000_000)
+    except OSError:
+        return None
+
+
+def remove_from_gitignore(project_root: Path) -> None:
+    """Remove ``/.vectorless_code/`` entry and its comment from ``.gitignore``."""
+    gitignore = project_root / ".gitignore"
+    if not gitignore.is_file():
+        return
+
+    lines = gitignore.read_text().splitlines(keepends=True)
+    new_lines: list[str] = []
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].rstrip("\n\r")
+        if stripped == _GITIGNORE_ENTRY:
+            if new_lines and new_lines[-1].rstrip("\n\r") == _GITIGNORE_COMMENT:
+                new_lines.pop()
+            i += 1
+            continue
+        new_lines.append(lines[i])
+        i += 1
+    gitignore.write_text("".join(new_lines))
