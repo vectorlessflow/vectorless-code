@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import functools
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -12,6 +13,8 @@ from typing import TypeVar
 import typer
 
 from vectorless_code import __version__
+
+logger = logging.getLogger(__name__)
 from vectorless_code.client import DaemonStartError, is_daemon_running, start_daemon, stop_daemon
 from vectorless_code.protocol import (
     DoctorCheckResult,
@@ -39,9 +42,6 @@ app = typer.Typer(
 
 daemon_app = typer.Typer(name="daemon", help="Manage the daemon process.")
 app.add_typer(daemon_app, name="daemon")
-
-
-_DEFAULT_MODEL = "gpt-4o"
 
 
 @app.callback()
@@ -271,37 +271,37 @@ def init() -> None:
     cwd = Path.cwd().resolve()
     sfile = settings_path(cwd)
 
+    logger.info("Initializing vectorless-code in %s", cwd)
+
     if sfile.is_file():
         typer.echo("Project already initialized.")
+        logger.debug("Project settings already exist at %s", sfile)
     else:
         path = save_initial_settings(cwd)
         typer.echo(f"Created project settings: {path}")
         add_to_gitignore(cwd)
         typer.echo("Run `vcc compile` to build the code index.")
+        logger.info("Created project settings at %s", path)
 
     user_settings_file, user_settings = require_user_settings()
 
     if not user_settings.api_key:
         typer.echo("")
-        api_key = typer.prompt("Enter your VECTORLESS_API_KEY", default="", show_default=False)
-        if api_key:
-            user_settings.api_key = api_key
+        api_key = typer.prompt("Enter your VECTORLESS_API_KEY", show_default=False)
+        user_settings.api_key = api_key
 
-    if not user_settings.model or user_settings.model == _DEFAULT_MODEL:
+    if not user_settings.model:
         typer.echo("")
-        model = typer.prompt("Enter your VECTORLESS_MODEL", default=_DEFAULT_MODEL)
-        if model:
-            user_settings.model = model
+        model = typer.prompt("Enter your VECTORLESS_MODEL")
+        user_settings.model = model
 
     if not user_settings.endpoint:
         typer.echo("")
-        endpoint = typer.prompt("Enter your VECTORLESS_ENDPOINT", default="", show_default=False)
-        if endpoint:
-            user_settings.endpoint = endpoint
+        endpoint = typer.prompt("Enter your VECTORLESS_ENDPOINT", show_default=False)
+        user_settings.endpoint = endpoint
 
-    if user_settings.api_key or user_settings.endpoint:
-        saved = save_user_settings(user_settings)
-        typer.echo(f"Settings saved to {saved}")
+    saved = save_user_settings(user_settings)
+    typer.echo(f"Settings saved to {saved}")
 
 
 @app.command("compile")
@@ -311,8 +311,10 @@ def compile_cmd() -> None:
     from vectorless_code import client as _client
 
     project_root = str(require_project_root())
+    logger.info("Compiling project: %s", project_root)
     print_project_header(project_root)
     _run_index_with_progress(project_root)
+    logger.info("Compilation complete for %s", project_root)
 
 
 @app.command()
@@ -326,6 +328,7 @@ def ask(
     project_root = str(require_project_root())
     query_str = " ".join(question)
 
+    logger.info("Querying project %s: %s", project_root, query_str[:100])
     print_project_header(project_root)
 
     resp = _search_with_wait_spinner(

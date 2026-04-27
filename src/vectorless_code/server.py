@@ -41,8 +41,8 @@ class CodeChunkResult(BaseModel):
     score: float = Field(description="Confidence score (0-1, higher is better)")
 
 
-class SearchResultModel(BaseModel):
-    """Result from search tool."""
+class AskResultModel(BaseModel):
+    """Result from ask tool."""
 
     success: bool
     results: list[CodeChunkResult] = Field(default_factory=list)
@@ -60,15 +60,14 @@ def create_mcp_server(project_root: str) -> FastMCP:
     mcp = FastMCP("vectorless-code", instructions=_MCP_INSTRUCTIONS)
 
     @mcp.tool(
-        name="search",
+        name="ask",
         description=(
-            "Semantic code search across the entire codebase"
-            " -- finds code by meaning, not just text matching."
+            "Ask questions about the codebase using semantic understanding."
             " Use this instead of grep/glob when you need to find implementations,"
             " understand how features work,"
             " or locate related code without knowing exact names or keywords."
-            " Accepts natural language queries"
-            " (e.g., 'authentication logic', 'database connection handling')"
+            " Accepts natural language questions"
+            " (e.g., 'how are users authenticated', 'where is the error handling')"
             " or code snippets."
             " Returns matching code chunks with file paths,"
             " and relevance scores."
@@ -76,7 +75,7 @@ def create_mcp_server(project_root: str) -> FastMCP:
             " if most results look relevant, use offset to paginate for more."
         ),
     )
-    async def search(
+    async def ask(
         query: str = Field(
             description=(
                 "Natural language query or code snippet to search for."
@@ -105,7 +104,7 @@ def create_mcp_server(project_root: str) -> FastMCP:
                 " when the codebase hasn't changed."
             ),
         ),
-    ) -> SearchResultModel:
+    ) -> AskResultModel:
         """Query the codebase index via the daemon."""
         from . import client as _client
 
@@ -124,7 +123,7 @@ def create_mcp_server(project_root: str) -> FastMCP:
                     offset=offset,
                 ),
             )
-            return SearchResultModel(
+            return AskResultModel(
                 success=resp.success,
                 results=[
                     CodeChunkResult(
@@ -143,7 +142,7 @@ def create_mcp_server(project_root: str) -> FastMCP:
                 confidence=resp.confidence,
             )
         except Exception as e:
-            return SearchResultModel(success=False, message=f"Query failed: {e!s}")
+            return AskResultModel(success=False, message=f"Query failed: {e!s}")
 
     return mcp
 

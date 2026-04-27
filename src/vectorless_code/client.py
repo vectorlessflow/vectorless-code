@@ -210,6 +210,7 @@ def index(
     from .settings import normalize_path
 
     project_root = normalize_path(project_root)
+    logger.debug("Requesting index for %s", project_root)
     conn = _connect_and_handshake()
     try:
         conn.send_bytes(encode_request(IndexRequest(project_root=project_root)))
@@ -248,6 +249,7 @@ def search(
     from .settings import normalize_path
 
     project_root = normalize_path(project_root)
+    logger.debug("Searching %s: %s", project_root, query[:50])
     conn = _connect_and_handshake()
     try:
         conn.send_bytes(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,11 +10,12 @@ from typing import Any
 
 import yaml
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------------
 # User-level defaults
 # ---------------------------------------------------------------------------
 
-_DEFAULT_MODEL = "gpt-4o"
 _USER_SETTINGS_DIR = Path.home() / ".config" / "vectorless-code"
 _USER_SETTINGS_FILE = _USER_SETTINGS_DIR / "settings.yaml"
 
@@ -76,7 +78,7 @@ class UserSettings:
     """User-level global configuration (~/.config/vectorless-code/settings.yaml)."""
 
     api_key: str | None = None
-    model: str = _DEFAULT_MODEL
+    model: str | None = None
     endpoint: str | None = None
 
     @property
@@ -88,7 +90,7 @@ class UserSettings:
 def load_user_settings() -> UserSettings:
     """Load user settings from disk, falling back to environment variables."""
     api_key = os.environ.get("VECTORLESS_API_KEY")
-    model = os.environ.get("VECTORLESS_MODEL", _DEFAULT_MODEL)
+    model = os.environ.get("VECTORLESS_MODEL")
     endpoint = os.environ.get("VECTORLESS_ENDPOINT")
 
     if _USER_SETTINGS_FILE.is_file():
@@ -96,10 +98,11 @@ def load_user_settings() -> UserSettings:
             with open(_USER_SETTINGS_FILE) as f:
                 data = yaml.safe_load(f) or {}
             api_key = api_key or data.get("api_key")
-            model = data.get("model", model)
+            model = model or data.get("model")
             endpoint = endpoint or data.get("endpoint")
-        except OSError:
-            pass
+            logger.debug("Loaded user settings from %s", _USER_SETTINGS_FILE)
+        except OSError as e:
+            logger.warning("Failed to load user settings from %s: %s", _USER_SETTINGS_FILE, e)
 
     return UserSettings(api_key=api_key, model=model, endpoint=endpoint)
 
@@ -113,6 +116,7 @@ def save_user_settings(settings: UserSettings) -> Path:
     data["endpoint"] = settings.endpoint or ""
     with open(_USER_SETTINGS_FILE, "w") as f:
         yaml.safe_dump(data, f, default_flow_style=False)
+    logger.info("Saved user settings to %s", _USER_SETTINGS_FILE)
     return _USER_SETTINGS_FILE
 
 
