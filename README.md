@@ -1,5 +1,8 @@
 # vectorless-code
 
+[![PyPI](https://img.shields.io/pypi/v/vectorless-code.svg)](https://pypi.org/project/vectorless-code/)
+[![PyPI Downloads](https://static.pepy.tech/badge/vectorless-code/month)](https://pepy.tech/projects/vectorless-code)
+
 Code-aware search and navigation engine, powered by [`vectorless`](https://github.com/vectorlessflow/vectorless).
 
 ## Install
