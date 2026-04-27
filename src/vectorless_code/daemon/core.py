@@ -7,6 +7,7 @@ asyncio-based implementation.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import signal
 import time
@@ -20,9 +21,9 @@ from vectorless_code.daemon.protocol import (
     ErrorObject,
     JSONRPCRequest,
     JSONRPCResponse,
-    METHOD_INDEX,
+    METHOD_ASK,
+    METHOD_COMPILE,
     METHOD_PING,
-    METHOD_SEARCH,
     METHOD_STATUS,
     METHOD_STOP,
 )
@@ -272,10 +273,10 @@ class Daemon:
         params = request.params
 
         try:
-            if method == METHOD_INDEX:
-                result = await self._handle_index(params)
-            elif method == METHOD_SEARCH:
-                result = await self._handle_search(params)
+            if method == METHOD_COMPILE:
+                result = await self._handle_compile(params)
+            elif method == METHOD_ASK:
+                result = await self._handle_ask(params)
             elif method == METHOD_STATUS:
                 result = await self._handle_status(params)
             elif method == METHOD_STOP:
@@ -304,7 +305,7 @@ class Daemon:
     # Request handlers
     # ------------------------------------------------------------------
 
-    async def _handle_index(self, params: dict) -> dict:
+    async def _handle_compile(self, params: dict) -> dict:
         """Handle index request."""
         from vectorless_code.compile import compile_project
 
