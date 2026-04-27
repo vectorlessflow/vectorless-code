@@ -5,6 +5,9 @@
 
 Code-aware search and navigation engine, powered by [`vectorless`](https://github.com/vectorlessflow/vectorless).
 
+> **vectorless-code** is built on top of [vectorless](https://github.com/vectorlessflow/vectorless). The vectorless project is currently under active development. Once it reaches a stable release, vectorless-code will fully inherit its capabilities and deliver the intended search experience.
+
+
 ## Install
 
 ```bash
