@@ -63,7 +63,7 @@ vcc compile
 - `SPLITTABLE_NODE_TYPES` dict defines which AST node types to extract per language
 - Parser is cached per language (`_parser_cache`) — reused across files
 - **Fallback**: line-based splitting on blank-line boundaries when tree-sitter is unavailable
-- Languages: Python, Rust, Go, JavaScript, TypeScript, Java, C, C++, Ruby, Swift, Kotlin, Scala
+- Languages: Python, Rust, Go, JavaScript, TypeScript, Java, C, C++, Ruby, Kotlin, Scala
 
 ### Raw node tree structure
 

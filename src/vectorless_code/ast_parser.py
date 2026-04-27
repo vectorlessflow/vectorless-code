@@ -80,14 +80,6 @@ SPLITTABLE_NODE_TYPES: dict[str, set[str]] = {
         "class",
         "module",
     },
-    "swift": {
-        "function_declaration",
-        "class_declaration",
-        "struct_declaration",
-        "protocol_declaration",
-        "enum_declaration",
-        "extension_declaration",
-    },
     "kotlin": {
         "function_declaration",
         "class_declaration",
@@ -114,7 +106,6 @@ _LANG_PACKAGE_MAP: dict[str, str] = {
     "c": "tree_sitter_c",
     "cpp": "tree_sitter_cpp",
     "ruby": "tree_sitter_ruby",
-    "swift": "tree_sitter_swift",
     "kotlin": "tree_sitter_kotlin",
     "scala": "tree_sitter_scala",
 }

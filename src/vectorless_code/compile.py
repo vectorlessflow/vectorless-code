@@ -59,7 +59,6 @@ _EXTENSION_TO_LANG: dict[str, str] = {
     ".cs": "csharp",
     ".rb": "ruby",
     ".php": "php",
-    ".swift": "swift",
     ".kt": "kotlin",
     ".scala": "scala",
     ".sql": "sql",

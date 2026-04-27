@@ -41,7 +41,6 @@ DEFAULT_INCLUDED_PATTERNS: list[str] = [
     "**/*.cs",
     "**/*.rb",
     "**/*.php",
-    "**/*.swift",
     "**/*.kt",
     "**/*.scala",
     "**/*.sql",

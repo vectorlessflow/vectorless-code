@@ -36,7 +36,6 @@ dependencies = [
     "tree-sitter-c>=0.21",
     "tree-sitter-cpp>=0.21",
     "tree-sitter-ruby>=0.21",
-    "tree-sitter-swift>=0.21",
     "tree-sitter-kotlin>=0.21",
     "tree-sitter-scala>=0.21",
     "msgspec>=0.18.0",

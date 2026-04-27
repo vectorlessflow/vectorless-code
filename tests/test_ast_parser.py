@@ -32,7 +32,7 @@ class TestSplittableNodeTypes:
     def test_all_supported_languages_have_types(self):
         expected = {
             "python", "rust", "go", "javascript", "typescript",
-            "java", "c", "cpp", "ruby", "swift", "kotlin", "scala",
+            "java", "c", "cpp", "ruby", "kotlin", "scala",
         }
         assert set(SPLITTABLE_NODE_TYPES.keys()) == expected
 
