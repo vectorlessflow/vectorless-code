@@ -14,8 +14,10 @@ services:
       - ${VCC_HOST_WORKSPACE:-${HOME}}:/workspace
       - vectorless-data:/var/vectorless_code
     environment:
+      # Runtime directory for daemon socket
+      VCC_RUNTIME_DIR: /var/vectorless_code
       # Path mapping for host path display in results
-      VECTORLESS_HOST_PATH_MAPPING: /workspace=${VCC_HOST_WORKSPACE:-${HOME}}
+      VCC_HOST_PATH_MAPPING: /workspace=${VCC_HOST_WORKSPACE:-${HOME}}
       # Linux only: set these so files are owned by you
       PUID: ${PUID:-}
       PGID: ${PGID:-}

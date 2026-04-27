@@ -31,10 +31,9 @@ The container runs the **daemon directly**:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `VECTORLESS_HOST_PATH_MAPPING` | Map container paths to host paths | `/workspace=$HOME` |
-| `VECTORLESS_CODE_DIR` | Project config directory | `/workspace/.vectorless_code` |
-| `VECTORLESS_CODE_RUNTIME_DIR` | Daemon runtime directory | `/var/vectorless_code` |
-| `VECTORLESS_DAEMON_SUPERVISED` | Enable supervised mode | `1` |
+| `VCC_RUNTIME_DIR` | Daemon runtime directory (socket, PID, log) | `/var/vectorless_code` |
+| `VCC_DAEMON_SUPERVISED` | Enable supervised mode | `1` |
+| `VCC_HOST_PATH_MAPPING` | Map container paths to host paths | `/workspace=$HOME` |
 | `PUID` | Host user ID (Linux only) | - |
 | `PGID` | Host group ID (Linux only) | - |
 | `VCC_HOST_WORKSPACE` | Path to mount as workspace | `$HOME` |

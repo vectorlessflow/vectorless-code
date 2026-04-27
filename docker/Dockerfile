@@ -25,9 +25,8 @@ RUN mkdir -p /var/vectorless_code \
 WORKDIR /workspace
 
 # Runtime environment variables
-ENV VECTORLESS_CODE_DIR=/workspace/.vectorless_code \
-    VECTORLESS_CODE_RUNTIME_DIR=/var/vectorless_code \
-    VECTORLESS_DAEMON_SUPERVISED=1 \
+ENV VCC_RUNTIME_DIR=/var/vectorless_code \
+    VCC_DAEMON_SUPERVISED=1 \
     PYTHONUNBUFFERED=1
 
 # Install vectorless-code
@@ -45,4 +44,4 @@ RUN --mount=type=bind,source=.,target=/vcc-src,rw=true \
 USER vcc
 
 # Default: run the daemon (it will manage itself)
-CMD ["python", "-m", "vectorless_code.daemon.server"]
+CMD ["python", "-m", "vectorless_code.daemon"]
