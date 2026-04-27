@@ -1,14 +1,7 @@
-# vectorless-code — Docker Compose quickstart.
+# vectorless-code — Docker Compose for simplified daemon architecture.
 #
-#   # macOS / Windows
-#   docker compose up -d
-#
-#   # Linux (aligns file ownership with your host user)
-#   PUID=$(id -u) PGID=$(id -g) docker compose up -d
-#
-# By default your home directory is mounted into the container as the
-# workspace. Set VCC_HOST_WORKSPACE=/path/to/code to mount a narrower
-# directory instead.
+# The daemon now runs directly without an entrypoint wrapper.
+# It manages its own lifecycle including file watching and auto-reindex.
 
 services:
   vectorless-code:
@@ -21,14 +14,13 @@ services:
       - ${VCC_HOST_WORKSPACE:-${HOME}}:/workspace
       - vectorless-data:/var/vectorless_code
     environment:
-      # Makes CLI and MCP output show your real paths
-      # (e.g. `/Users/you/myproject/...`) instead of container paths
-      # (e.g. `/workspace/myproject/...`).
+      # Path mapping for host path display in results
       VECTORLESS_HOST_PATH_MAPPING: /workspace=${VCC_HOST_WORKSPACE:-${HOME}}
-      # Linux only: set these so files written to your workspace are owned by
-      # you rather than root. Not needed on macOS / Windows — leave empty.
+      # Linux only: set these so files are owned by you
       PUID: ${PUID:-}
       PGID: ${PGID:-}
+    # Restart policy: restart unless manually stopped
+    restart: unless-stopped
 
 volumes:
   vectorless-data:
