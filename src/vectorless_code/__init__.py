@@ -1,10 +1,6 @@
-"""vectorless-code — code search engine built on vectorless."""
+"""vectorless-code — Code search and navigation engine built on vectorless."""
 
-__version__ = "0.1.0"
+from vectorless_code._version import __version__
+from vectorless_code.server import main
 
-
-def main() -> None:
-    """Entry point for the ``vectorless-code`` command."""
-    from vectorless_code.cli import app
-
-    app()
+__all__ = ["main", "__version__"]

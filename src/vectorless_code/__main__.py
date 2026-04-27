@@ -1,5 +1,6 @@
-"""Allow running as ``python -m vectorless_code``."""
+"""Entry point for `python -m vectorless_code`."""
 
-from vectorless_code.cli import app
+from .server import main
 
-app()
+if __name__ == "__main__":
+    main()
