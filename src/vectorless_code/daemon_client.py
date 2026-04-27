@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-from vectorless_code._daemon_paths import daemon_socket_path
+from vectorless_code.daemon_paths import daemon_socket_path
 from vectorless_code._version import __version__
 from vectorless_code.daemon.protocol import (
     Error,

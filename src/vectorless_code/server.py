@@ -15,6 +15,9 @@ from pathlib import Path
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
+from vectorless_code.daemon_client import DaemonClient
+from vectorless_code.daemon.protocol import SearchRequest
+
 _MCP_INSTRUCTIONS = (
     "Code search and codebase understanding tools."
     "\n"
@@ -99,50 +102,57 @@ def create_mcp_server(project_root: str) -> FastMCP:
         refresh_index: bool = Field(
             default=True,
             description=(
-                "Whether to incrementally update the index before searching."
-                " Set to False for faster consecutive queries"
-                " when the codebase hasn't changed."
+                "Whether to re-index the project before searching if it's stale."
+                " Disable to save time if you're confident the index is up-to-date."
             ),
         ),
     ) -> AskResultModel:
-        """Query the codebase index via the daemon."""
-        from . import client as _client
-
-        loop = asyncio.get_event_loop()
+        """Ask questions about the codebase using semantic understanding."""
+        client = DaemonClient()
         try:
-            if refresh_index:
-                await loop.run_in_executor(None, lambda: _client.index(project_root))
-
-            resp = await loop.run_in_executor(
-                None,
-                lambda: _client.search(
-                    project_root=project_root,
-                    query=query,
-                    doc_ids=None,
-                    limit=limit,
-                    offset=offset,
-                ),
-            )
+            # First check project status
+            status_result = await client.status(project_root)
+            if not status_result.get('indexed', False):
+                if refresh_index:
+                    # Index the project first
+                    index_result = await client.index(project_root)
+                    if not index_result.get('success'):
+                        return AskResultModel(success=False, message=index_result.get('message', 'Indexing failed'))
+                else:
+                    return AskResultModel(success=False, message='Project not indexed')
+            
+            # Perform the search
+            search_params = {
+                'project_root': project_root,
+                'query': query,
+                'limit': limit,
+                'offset': offset
+            }
+            search_result = await client.search(**search_params)
+            
+            # Convert results to the expected format
+            results = [
+                CodeChunkResult(
+                    file_path=r.get('file_path', ''),
+                    source_path=r.get('source_path'),
+                    doc_name=r.get('doc_name'),
+                    node_title=r.get('node_title'),
+                    content=r.get('content', ''),
+                    score=r.get('score', 0.0)
+                )
+                for r in search_result.get('results', [])
+            ]
+            
             return AskResultModel(
-                success=resp.success,
-                results=[
-                    CodeChunkResult(
-                        file_path=r.file_path,
-                        source_path=r.source_path,
-                        doc_name=r.doc_name,
-                        node_title=r.node_title,
-                        content=r.content,
-                        score=r.score,
-                    )
-                    for r in resp.results
-                ],
-                total_returned=resp.total_returned,
-                offset=resp.offset,
-                message=resp.message,
-                confidence=resp.confidence,
+                success=search_result.get('success', False),
+                results=results,
+                total_returned=len(results),
+                message=search_result.get('message'),
+                confidence=search_result.get('confidence', 0.0)
             )
         except Exception as e:
-            return AskResultModel(success=False, message=f"Query failed: {e!s}")
+            logger.error(f"Error in ask tool: {e}")
+            return AskResultModel(success=False, message=str(e))
 
     return mcp
 
