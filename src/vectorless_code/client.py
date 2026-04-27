@@ -1,6 +1,7 @@
-"""Simplified client for communicating with the daemon.
+"""vcc client - communicate with the daemon over JSON-RPC.
 
-Uses JSON-RPC over Unix socket instead of msgpack + multiprocessing.
+Simplified client using asyncio + Unix socket + JSON.
+Replaces the complex msgspec + multiprocessing approach.
 """
 
 from __future__ import annotations
@@ -17,16 +18,11 @@ from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any, TypeVar
 
-from vectorless_code.daemon.protocol import (
-    METHOD_ASK,
-    METHOD_COMPILE,
-    METHOD_PING,
-    METHOD_STATUS,
-    METHOD_STOP,
-    JSONRPCRequest,
-    JSONRPCResponse,
+from vectorless_code._runtime import (
+    daemon_log_path,
+    daemon_pid_path,
+    daemon_socket_path,
 )
-from vectorless_code.daemon_paths import daemon_socket_path
 
 logger = logging.getLogger(__name__)
 
@@ -52,12 +48,6 @@ class DaemonStartError(DaemonError):
         self.log = log
 
 
-class DaemonVersionError(DaemonError):
-    """Raised when the daemon has a version mismatch."""
-
-    pass
-
-
 class RPCError(DaemonError):
     """Raised when the daemon returns an error response."""
 
@@ -73,42 +63,37 @@ class RPCError(DaemonError):
 
 
 class DaemonClient:
-    """Client for communicating with the daemon over Unix socket.
+    """Client for communicating with the vcc daemon.
 
     Example:
         ```python
         client = DaemonClient()
 
-        # Index a project
-        result = await client.index("/path/to/project")
-        print(f"Indexed {result['file_count']} files")
+        # Compile a project
+        result = await client.compile("/path/to/project")
+        print(f"Compiled {result['file_count']} files")
 
         # Search
-        result = await client.search("/path/to/project", "authentication logic")
+        result = await client.ask("/path/to/project", "authentication logic")
         for r in result['results']:
             print(f"{r['file_path']}: {r['node_title']}")
         ```
     """
 
-    def __init__(self, socket_path: Path | None = None):
+    def __init__(self, socket_path: str | None = None):
         """Initialize the client.
 
         Args:
-            socket_path: Path to the daemon Unix socket.
+            socket_path: Path to the daemon Unix socket (default: from _runtime).
         """
         self._socket_path = socket_path or daemon_socket_path()
         self._request_id = 0
         self._daemon_checked = False
 
-    @property
-    def socket_path(self) -> Path:
-        """Get the socket path."""
-        return self._socket_path
-
     def _next_id(self) -> int:
         """Get the next request ID."""
-        self._next_id.counter += 1  # type: ignore
-        return self._next_id.counter  # type: ignore
+        self._next_id.counter += 1
+        return self._next_id.counter
 
     _next_id.counter = 0
 
@@ -139,15 +124,16 @@ class DaemonClient:
         # Ensure daemon is running
         await self._ensure_daemon()
 
-        request = JSONRPCRequest(
-            method=method,
-            params=params,
-            id=self._next_id(),
-        )
+        request = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": self._next_id(),
+        }
 
         try:
             reader, writer = await asyncio.wait_for(
-                asyncio.open_unix_connection(str(self._socket_path)),
+                asyncio.open_unix_connection(self._socket_path),
                 timeout=5.0,
             )
 
@@ -156,7 +142,7 @@ class DaemonClient:
 
         try:
             # Send request
-            writer.write(request.to_json().encode() + b"\n")
+            writer.write(json.dumps(request).encode() + b"\n")
             await writer.drain()
 
             # Read response
@@ -168,17 +154,18 @@ class DaemonClient:
             if not response_line:
                 raise DaemonError("Connection closed by daemon")
 
-            response = JSONRPCResponse.from_json(response_line.decode())
+            response = json.loads(response_line.decode())
 
             # Check for error
-            if response.error:
+            if "error" in response:
+                error = response["error"]
                 raise RPCError(
-                    code=response.error.code,
-                    message=response.error.message,
-                    data=response.error.data,
+                    code=error["code"],
+                    message=error["message"],
+                    data=error.get("data"),
                 )
 
-            return response.result
+            return response.get("result")
 
         except TimeoutError:
             raise DaemonError(f"Request timeout after {timeout}s") from None
@@ -237,20 +224,18 @@ class DaemonClient:
     async def _ping(self) -> bool:
         """Check if the daemon is alive."""
         try:
-            result = await self._call(METHOD_PING, {}, timeout=1.0)
+            result = await self._call("ping", {}, timeout=1.0)
             return isinstance(result, dict) and result.get("pong") is True
         except Exception:
             return False
 
     def _is_supervised(self) -> bool:
         """Check if running in supervised mode (e.g., Docker)."""
-        return os.environ.get("VECTORLESS_DAEMON_SUPERVISED") == "1"
+        return os.environ.get("VCC_DAEMON_SUPERVISED") == "1"
 
     def _start_daemon_process(self) -> subprocess.Popen:
         """Start the daemon as a background process."""
-        from vectorless_code.daemon_paths import daemon_log_path, daemon_runtime_dir
-
-        runtime_dir = daemon_runtime_dir()
+        runtime_dir = daemon_pid_path().parent
         runtime_dir.mkdir(parents=True, exist_ok=True)
 
         log_path = daemon_log_path()
@@ -283,6 +268,7 @@ class DaemonClient:
             )
 
         log_fd.close()
+        logger.info("Started daemon process with PID %d", proc.pid)
         return proc
 
     def _find_vcc_executable(self) -> str | None:
@@ -297,8 +283,6 @@ class DaemonClient:
 
     def _read_daemon_log(self) -> str | None:
         """Read the daemon log file."""
-        from vectorless_code.daemon_paths import daemon_log_path
-
         log_path = daemon_log_path()
         try:
             content = log_path.read_text().strip()
@@ -310,12 +294,12 @@ class DaemonClient:
     # Public API
     # ------------------------------------------------------------------
 
-    async def index(
+    async def compile(
         self,
         project_root: str,
         timeout: float = 300.0,
     ) -> dict:
-        """Index a project.
+        """Compile a project.
 
         Args:
             project_root: Path to the project root.
@@ -325,12 +309,12 @@ class DaemonClient:
             Dict with keys: success, doc_id, file_count, total_lines, etc.
         """
         return await self._call(
-            METHOD_COMPILE,
+            "compile",
             {"project_root": project_root},
             timeout=timeout,
         )
 
-    async def search(
+    async def ask(
         self,
         project_root: str,
         query: str,
@@ -338,7 +322,7 @@ class DaemonClient:
         offset: int = 0,
         timeout: float = 120.0,
     ) -> dict:
-        """Search a project.
+        """Ask a question about a project.
 
         Args:
             project_root: Path to the project root.
@@ -351,7 +335,7 @@ class DaemonClient:
             Dict with keys: success, results, confidence, etc.
         """
         return await self._call(
-            METHOD_ASK,
+            "ask",
             {
                 "project_root": project_root,
                 "query": query,
@@ -376,23 +360,10 @@ class DaemonClient:
             Dict with keys: indexed, indexing, file_count, etc.
         """
         return await self._call(
-            METHOD_STATUS,
+            "status",
             {"project_root": project_root},
             timeout=timeout,
         )
-
-    async def stop(self, timeout: float = 5.0) -> dict:
-        """Stop the daemon.
-
-        Args:
-            timeout: Request timeout in seconds.
-
-        Returns:
-            Dict with key: ok
-        """
-        result = await self._call(METHOD_STOP, {}, timeout=timeout)
-        self._daemon_checked = False
-        return result
 
     async def daemon_status(self, timeout: float = 5.0) -> dict:
         """Get daemon status.
@@ -413,9 +384,22 @@ class DaemonClient:
         """Get project status (alias for status)."""
         return await self.status(project_root, timeout=timeout)
 
+    async def stop(self, timeout: float = 5.0) -> dict:
+        """Stop the daemon.
+
+        Args:
+            timeout: Request timeout in seconds.
+
+        Returns:
+            Dict with key: ok
+        """
+        result = await self._call("stop", {}, timeout=timeout)
+        self._daemon_checked = False
+        return result
+
 
 # ---------------------------------------------------------------------------
-# Convenience wrappers (sync API)
+# Sync wrappers
 # ---------------------------------------------------------------------------
 
 
@@ -429,16 +413,16 @@ def _run_async(coro: Awaitable[T]) -> T:
         loop.close()
 
 
-def index(project_root: str) -> dict:
-    """Index a project (synchronous wrapper)."""
+def compile(project_root: str) -> dict:
+    """Compile a project (synchronous wrapper)."""
     client = DaemonClient()
-    return _run_async(client.index(project_root))
+    return _run_async(client.compile(project_root))
 
 
-def search(project_root: str, query: str, limit: int = 10) -> dict:
-    """Search a project (synchronous wrapper)."""
+def ask(project_root: str, query: str, limit: int = 10) -> dict:
+    """Ask a question (synchronous wrapper)."""
     client = DaemonClient()
-    return _run_async(client.search(project_root, query, limit))
+    return _run_async(client.ask(project_root, query, limit))
 
 
 def status(project_root: str) -> dict:
@@ -460,8 +444,6 @@ def stop() -> dict:
 
 def is_daemon_running() -> bool:
     """Check if the daemon is running by checking the PID file."""
-    from vectorless_code.daemon_paths import daemon_pid_path
-
     pid_path = daemon_pid_path()
     if not pid_path.exists():
         return False
@@ -491,9 +473,7 @@ def start_daemon() -> subprocess.Popen:
     Returns:
         The subprocess.Popen object for the daemon process.
     """
-    from vectorless_code.daemon_paths import daemon_log_path, daemon_runtime_dir
-
-    runtime_dir = daemon_runtime_dir()
+    runtime_dir = daemon_pid_path().parent
     runtime_dir.mkdir(parents=True, exist_ok=True)
 
     log_path = daemon_log_path()
@@ -532,8 +512,6 @@ def start_daemon() -> subprocess.Popen:
 
 def stop_daemon() -> None:
     """Stop the daemon by sending SIGTERM."""
-    from vectorless_code.daemon_paths import daemon_pid_path
-
     pid_path = daemon_pid_path()
     if not pid_path.exists():
         logger.warning("Daemon PID file not found")
@@ -582,7 +560,7 @@ def _wait_for_daemon(proc: subprocess.Popen | None = None, timeout: float = 30.0
             raise RuntimeError("Daemon process exited before becoming ready")
 
         try:
-            result = asyncio.run(client._call(METHOD_PING, {}, timeout=1.0))
+            result = asyncio.run(client._call("ping", {}, timeout=1.0))
             if result.get("pong"):
                 logger.info("Daemon is ready")
                 return

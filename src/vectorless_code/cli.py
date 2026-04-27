@@ -12,17 +12,17 @@ from typing import TypeVar
 
 import typer
 
-from vectorless_code.daemon.protocol import (
-    DoctorCheckResult,
-    IndexingProgress,
-    ProjectStatusResponse,
-    SearchResponse,
-)
-from vectorless_code.daemon_client import (
+from vectorless_code.client import (
     DaemonStartError,
     is_daemon_running,
     start_daemon,
     stop_daemon,
+)
+from vectorless_code.protocol import (
+    DoctorCheckResult,
+    IndexingProgress,
+    ProjectStatusResponse,
+    SearchResponse,
 )
 from vectorless_code.settings import (
     add_to_gitignore,
@@ -182,7 +182,7 @@ def _run_index_with_progress(project_root: str) -> None:
     from rich.live import Live
     from rich.spinner import Spinner
 
-    from vectorless_code.daemon_client import DaemonClient
+    from vectorless_code.client import DaemonClient
 
     err_console = Console(stderr=True)
     last_progress_line: str | None = None
@@ -206,7 +206,7 @@ def _run_index_with_progress(project_root: str) -> None:
         try:
             client = DaemonClient()
             resp = asyncio.run(
-                client.index(
+                client.compile(
                     project_root,
                     on_progress=_on_progress_async,
                     on_waiting=_on_waiting_async,
@@ -248,7 +248,7 @@ def _search_with_wait_spinner(
     from rich.live import Live
     from rich.spinner import Spinner
 
-    from vectorless_code.daemon_client import DaemonClient
+    from vectorless_code.client import DaemonClient
 
     err_console = Console(stderr=True)
 
@@ -354,7 +354,7 @@ def ask(
 @_catch_daemon_start_error
 def status() -> None:
     """Show compilation status and index statistics."""
-    from vectorless_code.daemon_client import DaemonClient
+    from vectorless_code.client import DaemonClient
 
     project_root_path = require_project_root()
     project_root = str(project_root_path)
@@ -498,7 +498,7 @@ def doctor() -> None:
 
     _print_section("Daemon")
     try:
-        from vectorless_code.daemon_client import DaemonClient
+        from vectorless_code.client import DaemonClient
 
         client = DaemonClient()
         st_dict = asyncio.run(client.daemon_status())
@@ -519,7 +519,7 @@ def doctor() -> None:
         typer.echo(f"  Settings: {ps_path}")
 
     _print_section("Log Files")
-    from vectorless_code.daemon_paths import daemon_log_path as _daemon_log_path
+    from vectorless_code._runtime import daemon_log_path as _daemon_log_path
 
     typer.echo(f"  Daemon logs: {_daemon_log_path()}")
 
@@ -533,14 +533,14 @@ def mcp() -> None:
     project_root = str(require_project_root())
 
     async def _run_mcp() -> None:
-        from vectorless_code.daemon_client import DaemonClient
+        from vectorless_code.client import DaemonClient
         from vectorless_code.server import create_mcp_server
 
         # The daemon handles auto-indexing through file watching
         # Just ensure the project is compiled
         client = DaemonClient()
         try:
-            await client.index(project_root)
+            await client.compile(project_root)
         except Exception as e:
             logger.warning("Failed to index project: %s", e)
 
@@ -559,7 +559,7 @@ def mcp() -> None:
 @_catch_daemon_start_error
 def daemon_status() -> None:
     """Show daemon status."""
-    from vectorless_code.daemon_client import DaemonClient
+    from vectorless_code.client import DaemonClient
 
     client = DaemonClient()
     resp_dict = asyncio.run(client.daemon_status())
@@ -587,7 +587,7 @@ def daemon_status() -> None:
 @_catch_daemon_start_error
 def daemon_restart() -> None:
     """Restart the daemon."""
-    from vectorless_code.daemon_client import _wait_for_daemon
+    from vectorless_code.client import _wait_for_daemon
 
     typer.echo("Stopping daemon...")
     stop_daemon()
@@ -601,7 +601,7 @@ def daemon_restart() -> None:
 @daemon_app.command("stop")
 def daemon_stop() -> None:
     """Stop the daemon."""
-    from vectorless_code.daemon_paths import daemon_pid_path
+    from vectorless_code._runtime import daemon_pid_path
 
     pid_path = daemon_pid_path()
     if not pid_path.exists() and not is_daemon_running():
@@ -627,7 +627,7 @@ def daemon_stop() -> None:
 @app.command("run-daemon", hidden=True)
 def run_daemon_cmd() -> None:
     """Internal: run the daemon process."""
-    from vectorless_code.daemon.server import run_daemon
+    from vectorless_code.daemon import run_daemon
 
     run_daemon()
 

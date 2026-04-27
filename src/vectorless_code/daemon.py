@@ -1,7 +1,7 @@
-"""Core daemon implementation with asyncio and Unix socket.
+"""vcc daemon - background service for code indexing and search.
 
-Replaces the multiprocessing.Listener-based daemon with a simpler
-asyncio-based implementation.
+Simplified architecture using asyncio + Unix socket + JSON-RPC.
+Replaces the complex msgspec + multiprocessing.Listener approach.
 """
 
 from __future__ import annotations
@@ -9,26 +9,24 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import signal
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from vectorless_code._runtime import daemon_pid_path, daemon_socket_path
 from vectorless_code._version import __version__
-from vectorless_code.daemon.protocol import (
-    METHOD_ASK,
-    METHOD_COMPILE,
-    METHOD_PING,
-    METHOD_STATUS,
-    METHOD_STOP,
-    Error,
-    JSONRPCRequest,
-    JSONRPCResponse,
-)
-from vectorless_code.daemon.watcher import FileWatcher
 from vectorless_code.settings import load_user_settings
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[logging.StreamHandler()],
+)
 logger = logging.getLogger(__name__)
 
 
@@ -62,10 +60,10 @@ class ProjectState:
 
 
 class Daemon:
-    """Main daemon process using asyncio + Unix socket.
+    """vcc daemon service using asyncio + Unix socket.
 
     Features:
-    - JSON-RPC 2.0 protocol over Unix socket
+    - JSON-RPC 2.0 over Unix socket (human-readable)
     - Project registry with doc_id caching
     - File watching for auto-recompile
     - Concurrent request handling
@@ -74,19 +72,14 @@ class Daemon:
 
     def __init__(
         self,
-        socket_path: Path | None = None,
-        user_settings_path: Path | None = None,
+        socket_path: str | None = None,
     ):
         """Initialize the daemon.
 
         Args:
-            socket_path: Path to the Unix socket file.
-            user_settings_path: Path to user settings file.
+            socket_path: Path to the Unix socket (default: from _runtime).
         """
-        from vectorless_code.daemon_paths import daemon_socket_path
-
         self._socket_path = socket_path or daemon_socket_path()
-        self._user_settings_path = user_settings_path or user_settings_path()
 
         # State
         self._projects: dict[str, ProjectState] = {}
@@ -148,19 +141,20 @@ class Daemon:
             return
 
         # Ensure socket directory exists
-        self._socket_path.parent.mkdir(parents=True, exist_ok=True)
+        socket_path = Path(self._socket_path)
+        socket_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Remove stale socket if present
-        if self._socket_path.exists():
+        if socket_path.exists():
             try:
-                self._socket_path.unlink()
+                socket_path.unlink()
             except OSError:
                 pass
 
         # Create Unix socket server
         self._server = await asyncio.start_unix_server(
             self._handle_client,
-            path=str(self._socket_path),
+            path=str(socket_path),
         )
 
         self._start_time = time.monotonic()
@@ -218,7 +212,7 @@ class Daemon:
 
         # Remove socket file
         try:
-            self._socket_path.unlink(missing_ok=True)
+            Path(self._socket_path).unlink(missing_ok=True)
         except OSError:
             pass
 
@@ -245,18 +239,19 @@ class Daemon:
                 return
 
             try:
-                request = JSONRPCRequest.from_json(line.decode())
+                request = json.loads(line.decode())
             except (json.JSONDecodeError, ValueError) as e:
-                response = JSONRPCResponse.from_error(
-                    code=Error.PARSE_ERROR,
+                response = _error_response(
+                    code=-32700,
                     message=f"Invalid JSON: {e}",
+                    request_id=None,
                 )
             else:
                 # Dispatch request
                 response = await self._dispatch(request)
 
             # Write response line (JSON + newline)
-            writer.write(response.to_json().encode() + b"\n")
+            writer.write(json.dumps(response).encode() + b"\n")
             await writer.drain()
 
         except Exception as e:
@@ -266,19 +261,20 @@ class Daemon:
             await writer.wait_closed()
             logger.debug("Client disconnected: %s", addr)
 
-    async def _dispatch(self, request: JSONRPCRequest) -> JSONRPCResponse:
+    async def _dispatch(self, request: dict) -> dict:
         """Dispatch request to appropriate handler."""
-        method = request.method
-        params = request.params
+        method = request.get("method")
+        params = request.get("params", {})
+        req_id = request.get("id")
 
         try:
-            if method == METHOD_COMPILE:
+            if method == "compile":
                 result = await self._handle_compile(params)
-            elif method == METHOD_ASK:
+            elif method == "ask":
                 result = await self._handle_ask(params)
-            elif method == METHOD_STATUS:
+            elif method == "status":
                 result = await self._handle_status(params)
-            elif method == METHOD_STOP:
+            elif method == "stop":
                 result = await self._handle_stop()
             elif method == "daemon_status":
                 result = {
@@ -286,24 +282,23 @@ class Daemon:
                     "uptime_seconds": self.uptime_seconds,
                     "projects": self.list_projects(),
                 }
-            elif method == METHOD_PING:
+            elif method == "ping":
                 result = {"pong": True, "uptime": self.uptime_seconds}
             else:
-                result = JSONRPCResponse.from_error(
-                    code=Error.METHOD_NOT_FOUND,
+                return _error_response(
+                    code=-32601,
                     message=f"Unknown method: {method}",
-                    request_id=request.id,
+                    request_id=req_id,
                 )
-                return result
 
-            return JSONRPCResponse.from_result(result, request.id)
+            return _success_response(result, req_id)
 
         except Exception as e:
             logger.exception("Error handling %s request: %s", method, e)
-            return JSONRPCResponse.from_error(
-                code=Error.INTERNAL_ERROR,
+            return _error_response(
+                code=-32603,
                 message=str(e),
-                request_id=request.id,
+                request_id=req_id,
             )
 
     # ------------------------------------------------------------------
@@ -311,7 +306,7 @@ class Daemon:
     # ------------------------------------------------------------------
 
     async def _handle_compile(self, params: dict) -> dict:
-        """Handle index request."""
+        """Handle compile request."""
         from vectorless_code.compile import compile_project
 
         project_root = params.get("project_root")
@@ -370,7 +365,7 @@ class Daemon:
                 project.indexing = False
 
     async def _handle_ask(self, params: dict) -> dict:
-        """Handle search request."""
+        """Handle ask request."""
         from vectorless_code.ask import ask_codebase
 
         project_root = params.get("project_root")
@@ -391,7 +386,7 @@ class Daemon:
 
         # Check if project is indexed
         if not project.doc_id:
-            raise ValueError(f"Project not indexed: {project_root}. Call index() first.")
+            raise ValueError(f"Project not indexed: {project_root}. Call compile() first.")
 
         # Wait for any ongoing indexing to complete
         lock = self._index_locks.get(project_root)
@@ -486,3 +481,263 @@ class Daemon:
 
         task = asyncio.create_task(_do_reindex())
         self._reindex_tasks[project_root] = task
+
+
+# ---------------------------------------------------------------------------
+# File watcher (inline, since it's tightly coupled with daemon)
+# ---------------------------------------------------------------------------
+
+
+class FileWatcher:
+    """Monitor a directory for file changes using watchdog.
+
+    Debounces rapid changes to avoid excessive recompilations.
+    """
+
+    # Source file extensions to monitor
+    SOURCE_EXTENSIONS = {
+        # Python
+        ".py",
+        ".pyi",
+        # JavaScript/TypeScript
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".cjs",
+        # Rust
+        ".rs",
+        # Go
+        ".go",
+        # Java
+        ".java",
+        # C/C++
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cc",
+        ".cxx",
+        # Ruby
+        ".rb",
+        # Kotlin
+        ".kt",
+        ".kts",
+        # Scala
+        ".scala",
+        # Others
+        ".php",
+        ".sh",
+        ".bash",
+        ".lua",
+        ".sql",
+    }
+
+    def __init__(
+        self,
+        path: Path,
+        on_change: callable,
+        debounce_secs: float = 0.5,
+    ):
+        """Initialize the file watcher.
+
+        Args:
+            path: Directory to monitor (will be watched recursively).
+            on_change: Callback to invoke when source files change.
+            debounce_secs: Seconds to wait after last change before triggering.
+        """
+        self._path = path
+        self._on_change = on_change
+        self._debounce_secs = debounce_secs
+
+        self._observer = None
+        self._handler: _ChangeHandler | None = None
+
+    @property
+    def is_running(self) -> bool:
+        """True if the watcher is currently running."""
+        return self._observer is not None
+
+    def start(self) -> None:
+        """Start watching the directory."""
+        if self._observer is not None:
+            logger.warning("FileWatcher already running for %s", self._path)
+            return
+
+        try:
+            from watchdog.observers import Observer
+        except ImportError:
+            logger.error(
+                "watchdog not installed. File watching disabled. "
+                "Install with: pip install watchdog"
+            )
+            return
+
+        self._handler = _ChangeHandler(self._on_change, self._debounce_secs)
+        self._observer = Observer()
+        self._observer.schedule(
+            self._handler,
+            str(self._path),
+            recursive=True,
+        )
+        self._observer.start()
+        logger.info("FileWatcher started for %s", self._path)
+
+    def stop(self) -> None:
+        """Stop watching and clean up resources."""
+        if self._observer is None:
+            return
+
+        if self._handler is not None:
+            self._handler.stop()
+            self._handler = None
+
+        self._observer.stop()
+        self._observer.join(timeout=5.0)
+        self._observer = None
+        logger.info("FileWatcher stopped for %s", self._path)
+
+
+class _ChangeHandler:
+    """Internal watchdog event handler with debouncing."""
+
+    def __init__(self, callback: callable, debounce_secs: float = 0.5):
+        self._callback = callback
+        self._debounce_secs = debounce_secs
+        self._timer: threading.Timer | None = None
+        self._lock = threading.Lock()
+
+    def on_modified(self, event) -> None:
+        """Handle file modified event."""
+        if event.is_directory:
+            return
+
+        path = event.src_path
+
+        # Filter to source files only
+        if not any(path.endswith(ext) for ext in FileWatcher.SOURCE_EXTENSIONS):
+            return
+
+        # Skip hidden files and cache directories
+        if "/." in path or "\\." in path:
+            return
+        if "/node_modules/" in path or "\\node_modules\\" in path:
+            return
+        if "/.vectorless_code/" in path or "\\.vectorless_code\\" in path:
+            return
+        if "/__pycache__/" in path or "\\__pycache__\\" in path:
+            return
+        if "/.git/" in path or "\\.git\\" in path:
+            return
+
+        logger.debug("File changed: %s", path)
+
+        # Debounce: cancel existing timer and start new one
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+
+            self._timer = threading.Timer(self._debounce_secs, self._callback)
+            self._timer.start()
+
+    def stop(self) -> None:
+        """Cancel any pending timer."""
+        with self._lock:
+            if self._timer is not None:
+                self._timer.cancel()
+                self._timer = None
+
+
+# ---------------------------------------------------------------------------
+# JSON-RPC helpers
+# ---------------------------------------------------------------------------
+
+
+def _success_response(result: Any, request_id: int | None) -> dict:
+    """Create a JSON-RPC success response."""
+    response: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "result": result,
+    }
+    if request_id is not None:
+        response["id"] = request_id
+    return response
+
+
+def _error_response(code: int, message: str, request_id: int | None) -> dict:
+    """Create a JSON-RPC error response."""
+    response: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "error": {"code": code, "message": message},
+    }
+    if request_id is not None:
+        response["id"] = request_id
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Daemon entry point
+# ---------------------------------------------------------------------------
+
+
+def _write_pid_file() -> None:
+    """Write current PID to the pid file."""
+    pid_path = daemon_pid_path()
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+
+    pid_path.write_text(str(os.getpid()))
+    logger.debug("Wrote PID file: %s", pid_path)
+
+
+def _remove_pid_file() -> None:
+    """Remove the PID file."""
+    pid_path = daemon_pid_path()
+    try:
+        stored = pid_path.read_text().strip()
+        if stored == str(os.getpid()):
+            pid_path.unlink(missing_ok=True)
+            logger.debug("Removed PID file: %s", pid_path)
+    except (FileNotFoundError, ValueError, OSError):
+        pass
+
+
+def run_daemon() -> None:
+    """Main entry point for running the daemon (blocking)."""
+    logger.info("vectorless-code daemon v%s starting (PID %d)", __version__, os.getpid())
+
+    # Write PID file
+    _write_pid_file()
+
+    # Create and run daemon
+    daemon = Daemon()
+
+    async def _run() -> None:
+        try:
+            await daemon.start()
+            await daemon.run_until_shutdown()
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user")
+        except Exception as e:
+            logger.exception("Daemon error: %s", e)
+            raise
+        finally:
+            await daemon.stop()
+            _remove_pid_file()
+
+    try:
+        asyncio.run(_run())
+    finally:
+        # Ensure PID file is cleaned up
+        _remove_pid_file()
+
+    logger.info("Daemon exited")
+
+    # Use os._exit to ensure all threads/child processes are terminated
+    if threading.current_thread() is threading.main_thread():
+        os._exit(0)
+
+
+# For direct execution
+if __name__ == "__main__":
+    run_daemon()

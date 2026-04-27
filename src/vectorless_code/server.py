@@ -9,14 +9,16 @@ Supports two modes:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 
 from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 
-from vectorless_code.daemon_client import DaemonClient
-from vectorless_code.daemon.protocol import SearchRequest
+from vectorless_code.client import DaemonClient
+
+logger = logging.getLogger(__name__)
 
 _MCP_INSTRUCTIONS = (
     "Code search and codebase understanding tools."
@@ -114,22 +116,24 @@ def create_mcp_server(project_root: str) -> FastMCP:
             status_result = await client.status(project_root)
             if not status_result.get('indexed', False):
                 if refresh_index:
-                    # Index the project first
-                    index_result = await client.index(project_root)
-                    if not index_result.get('success'):
-                        return AskResultModel(success=False, message=index_result.get('message', 'Indexing failed'))
+                    # Compile the project first
+                    compile_result = await client.compile(project_root)
+                    if not compile_result.get("success"):
+                        return AskResultModel(
+                            success=False,
+                            message=compile_result.get("message", "Compilation failed"),
+                        )
                 else:
-                    return AskResultModel(success=False, message='Project not indexed')
-            
+                    return AskResultModel(success=False, message="Project not compiled")
+
             # Perform the search
-            search_params = {
-                'project_root': project_root,
-                'query': query,
-                'limit': limit,
-                'offset': offset
-            }
-            search_result = await client.search(**search_params)
-            
+            search_result = await client.ask(
+                project_root=project_root,
+                query=query,
+                limit=limit,
+                offset=offset,
+            )
+
             # Convert results to the expected format
             results = [
                 CodeChunkResult(
@@ -142,7 +146,7 @@ def create_mcp_server(project_root: str) -> FastMCP:
                 )
                 for r in search_result.get('results', [])
             ]
-            
+
             return AskResultModel(
                 success=search_result.get('success', False),
                 results=results,
@@ -173,18 +177,17 @@ def main() -> None:
 
     from .settings import (
         find_project_root,
-        load_project_settings,
         save_initial_settings,
         user_settings_path,
     )
 
     parser = argparse.ArgumentParser(
         prog="vectorless-code",
-        description="MCP server for codebase indexing and querying.",
+        description="MCP server for codebase compilation and querying.",
     )
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("serve", help="Run the MCP server (default)")
-    subparsers.add_parser("index", help="Build/refresh the index and report stats")
+    subparsers.add_parser("compile", help="Build/refresh the compilation index and report stats")
     args = parser.parse_args()
 
     # --- Discover project root ---
@@ -220,7 +223,7 @@ def main() -> None:
     from . import client as _client
     from .protocol import IndexingProgress
 
-    if args.command == "index":
+    if args.command == "compile":
         import sys
 
         from rich.console import Console
@@ -232,22 +235,22 @@ def main() -> None:
         err_console = Console(stderr=True)
         last_progress_line: str | None = None
 
-        with Live(Spinner("dots", "Indexing..."), console=err_console, transient=True) as live:
+        with Live(Spinner("dots", "Compiling..."), console=err_console, transient=True) as live:
 
             def _on_waiting() -> None:
                 live.update(
                     Spinner(
                         "dots",
-                        "Another indexing is ongoing, waiting for it to finish...",
+                        "Another compilation is ongoing, waiting for it to finish...",
                     )
                 )
 
             def _on_progress(progress: IndexingProgress) -> None:
                 nonlocal last_progress_line
-                last_progress_line = f"Indexing: {_format_progress(progress)}"
+                last_progress_line = f"Compiling: {_format_progress(progress)}"
                 live.update(Spinner("dots", last_progress_line))
 
-            resp = _client.index(
+            resp = _client.compile(
                 str(project_root), on_progress=_on_progress, on_waiting=_on_waiting
             )
 
@@ -255,25 +258,24 @@ def main() -> None:
             print(last_progress_line, file=sys.stderr)
 
         if resp.success:
-            st = _client.project_status(str(project_root))
-            print("\nIndex stats:")
-            print(f"  Files:  {st.file_count}")
-            print(f"  Lines:  {st.total_lines}")
-            print(f"  Size:   {st.total_bytes} bytes")
-            if st.languages:
+            st = _client.status(str(project_root))
+            print("\nCompilation stats:")
+            print(f"  Files:  {st.get('file_count', 0)}")
+            print(f"  Lines:  {st.get('total_lines', 0)}")
+            print(f"  Size:   {st.get('total_bytes', 0)} bytes")
+            languages = st.get('languages', {})
+            if languages:
                 print("  Languages:")
-                for lang, count in sorted(st.languages.items(), key=lambda x: -x[1]):
+                for lang, count in sorted(languages.items(), key=lambda x: -x[1]):
                     print(f"    {lang}: {count}")
         else:
-            print(f"Indexing failed: {resp.message}")
+            print(f"Compilation failed: {resp.get('message', 'Unknown error')}")
     else:
         # Default: run MCP server
         mcp_server = create_mcp_server(str(project_root))
 
         async def _serve() -> None:
-            from .client import _bg_index
-
-            asyncio.create_task(_bg_index(str(project_root)))
+            # The daemon handles auto-compilation through file watching
             await mcp_server.run_stdio_async()
 
         asyncio.run(_serve())
