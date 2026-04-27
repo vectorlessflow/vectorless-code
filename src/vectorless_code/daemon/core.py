@@ -11,24 +11,23 @@ import json
 import logging
 import signal
 import time
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from vectorless_code._version import __version__
 from vectorless_code.daemon.protocol import (
-    Error,
-    ErrorObject,
-    JSONRPCRequest,
-    JSONRPCResponse,
     METHOD_ASK,
     METHOD_COMPILE,
     METHOD_PING,
     METHOD_STATUS,
     METHOD_STOP,
+    Error,
+    JSONRPCRequest,
+    JSONRPCResponse,
 )
 from vectorless_code.daemon.watcher import FileWatcher
-from vectorless_code.settings import load_user_settings, user_settings_path
+from vectorless_code.settings import load_user_settings
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +280,12 @@ class Daemon:
                 result = await self._handle_status(params)
             elif method == METHOD_STOP:
                 result = await self._handle_stop()
+            elif method == "daemon_status":
+                result = {
+                    "version": str(__version__),
+                    "uptime_seconds": self.uptime_seconds,
+                    "projects": self.list_projects(),
+                }
             elif method == METHOD_PING:
                 result = {"pong": True, "uptime": self.uptime_seconds}
             else:
@@ -364,7 +369,7 @@ class Daemon:
             finally:
                 project.indexing = False
 
-    async def _handle_search(self, params: dict) -> dict:
+    async def _handle_ask(self, params: dict) -> dict:
         """Handle search request."""
         from vectorless_code.ask import ask_codebase
 
@@ -386,10 +391,7 @@ class Daemon:
 
         # Check if project is indexed
         if not project.doc_id:
-            raise ValueError(
-                f"Project not indexed: {project_root}. "
-                f"Call index() first."
-            )
+            raise ValueError(f"Project not indexed: {project_root}. Call index() first.")
 
         # Wait for any ongoing indexing to complete
         lock = self._index_locks.get(project_root)
@@ -406,12 +408,14 @@ class Daemon:
 
         results = []
         for ev in output.evidence:
-            results.append({
-                "file_path": ev.source_path or "",
-                "node_title": ev.node_title,
-                "content": ev.content,
-                "doc_name": ev.doc_name,
-            })
+            results.append(
+                {
+                    "file_path": ev.source_path or "",
+                    "node_title": ev.node_title,
+                    "content": ev.content,
+                    "doc_name": ev.doc_name,
+                }
+            )
 
         # Apply pagination
         paginated = results[offset : offset + limit]
@@ -475,7 +479,7 @@ class Daemon:
 
             try:
                 logger.info("Auto-reindexing %s", project_root)
-                await self._handle_index({"project_root": project_root})
+                await self._handle_compile({"project_root": project_root})
                 logger.info("Auto-reindex complete for %s", project_root)
             except Exception as e:
                 logger.error("Auto-reindex failed for %s: %s", project_root, e)

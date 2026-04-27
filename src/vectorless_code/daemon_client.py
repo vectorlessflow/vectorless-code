@@ -9,26 +9,28 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import time
+from collections.abc import Awaitable
 from pathlib import Path
+from typing import Any, TypeVar
 
-from vectorless_code.daemon_paths import daemon_socket_path
-from vectorless_code._version import __version__
 from vectorless_code.daemon.protocol import (
-    Error,
-    ErrorObject,
-    JSONRPCRequest,
-    JSONRPCResponse,
-    METHOD_INDEX,
+    METHOD_ASK,
+    METHOD_COMPILE,
     METHOD_PING,
-    METHOD_SEARCH,
     METHOD_STATUS,
     METHOD_STOP,
+    JSONRPCRequest,
+    JSONRPCResponse,
 )
+from vectorless_code.daemon_paths import daemon_socket_path
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 # ---------------------------------------------------------------------------
@@ -150,9 +152,7 @@ class DaemonClient:
             )
 
         except (FileNotFoundError, ConnectionRefusedError) as e:
-            raise DaemonError(
-                f"Cannot connect to daemon at {self._socket_path}: {e}"
-            ) from e
+            raise DaemonError(f"Cannot connect to daemon at {self._socket_path}: {e}") from e
 
         try:
             # Send request
@@ -180,7 +180,7 @@ class DaemonClient:
 
             return response.result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             raise DaemonError(f"Request timeout after {timeout}s") from None
         except (json.JSONDecodeError, ValueError) as e:
             raise DaemonError(f"Invalid response from daemon: {e}") from e
@@ -248,7 +248,7 @@ class DaemonClient:
 
     def _start_daemon_process(self) -> subprocess.Popen:
         """Start the daemon as a background process."""
-        from vectorless_code._daemon_paths import daemon_log_path, daemon_runtime_dir
+        from vectorless_code.daemon_paths import daemon_log_path, daemon_runtime_dir
 
         runtime_dir = daemon_runtime_dir()
         runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -265,13 +265,13 @@ class DaemonClient:
         log_fd = open(log_path, "w")
 
         if sys.platform == "win32":
-            CREATE_NO_WINDOW = 0x08000000
+            create_no_window = 0x08000000
             proc = subprocess.Popen(
                 cmd,
                 stdout=log_fd,
                 stderr=log_fd,
                 stdin=subprocess.DEVNULL,
-                creationflags=CREATE_NO_WINDOW,
+                creationflags=create_no_window,
             )
         else:
             proc = subprocess.Popen(
@@ -297,7 +297,7 @@ class DaemonClient:
 
     def _read_daemon_log(self) -> str | None:
         """Read the daemon log file."""
-        from vectorless_code._daemon_paths import daemon_log_path
+        from vectorless_code.daemon_paths import daemon_log_path
 
         log_path = daemon_log_path()
         try:
@@ -325,7 +325,7 @@ class DaemonClient:
             Dict with keys: success, doc_id, file_count, total_lines, etc.
         """
         return await self._call(
-            METHOD_INDEX,
+            METHOD_COMPILE,
             {"project_root": project_root},
             timeout=timeout,
         )
@@ -351,7 +351,7 @@ class DaemonClient:
             Dict with keys: success, results, confidence, etc.
         """
         return await self._call(
-            METHOD_SEARCH,
+            METHOD_ASK,
             {
                 "project_root": project_root,
                 "query": query,
@@ -394,6 +394,25 @@ class DaemonClient:
         self._daemon_checked = False
         return result
 
+    async def daemon_status(self, timeout: float = 5.0) -> dict:
+        """Get daemon status.
+
+        Args:
+            timeout: Request timeout in seconds.
+
+        Returns:
+            Dict with keys: version, uptime_seconds, projects
+        """
+        return await self._call("daemon_status", {}, timeout=timeout)
+
+    async def project_status(
+        self,
+        project_root: str,
+        timeout: float = 10.0,
+    ) -> dict:
+        """Get project status (alias for status)."""
+        return await self.status(project_root, timeout=timeout)
+
 
 # ---------------------------------------------------------------------------
 # Convenience wrappers (sync API)
@@ -434,7 +453,142 @@ def stop() -> dict:
     return _run_async(client.stop())
 
 
-# Type hint for return value
-from typing import Any, Awaitable, TypeVar
+# ---------------------------------------------------------------------------
+# Daemon lifecycle functions (for CLI)
+# ---------------------------------------------------------------------------
 
-T = TypeVar("T")
+
+def is_daemon_running() -> bool:
+    """Check if the daemon is running by checking the PID file."""
+    from vectorless_code.daemon_paths import daemon_pid_path
+
+    pid_path = daemon_pid_path()
+    if not pid_path.exists():
+        return False
+
+    try:
+        pid_str = pid_path.read_text().strip()
+        pid = int(pid_str)
+
+        # Check if process is running
+        if sys.platform == "win32":
+            import psutil
+
+            return psutil.pid_exists(pid)
+        else:
+            try:
+                os.kill(pid, 0)  # Send null signal
+                return True
+            except OSError:
+                return False
+    except (ValueError, OSError, ProcessLookupError):
+        return False
+
+
+def start_daemon() -> subprocess.Popen:
+    """Start the daemon as a background process.
+
+    Returns:
+        The subprocess.Popen object for the daemon process.
+    """
+    from vectorless_code.daemon_paths import daemon_log_path, daemon_runtime_dir
+
+    runtime_dir = daemon_runtime_dir()
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    log_path = daemon_log_path()
+
+    # Find the vcc executable or use python -m
+    vcc_path = _find_vcc_executable_static()
+    if vcc_path:
+        cmd = [vcc_path, "run-daemon"]
+    else:
+        cmd = [sys.executable, "-m", "vectorless_code.cli", "run-daemon"]
+
+    log_fd = open(log_path, "w")
+
+    if sys.platform == "win32":
+        create_no_window = 0x08000000
+        proc = subprocess.Popen(
+            cmd,
+            stdout=log_fd,
+            stderr=log_fd,
+            stdin=subprocess.DEVNULL,
+            creationflags=create_no_window,
+        )
+    else:
+        proc = subprocess.Popen(
+            cmd,
+            start_new_session=True,
+            stdout=log_fd,
+            stderr=log_fd,
+            stdin=subprocess.DEVNULL,
+        )
+
+    log_fd.close()
+    logger.info("Started daemon process with PID %d", proc.pid)
+    return proc
+
+
+def stop_daemon() -> None:
+    """Stop the daemon by sending SIGTERM."""
+    from vectorless_code.daemon_paths import daemon_pid_path
+
+    pid_path = daemon_pid_path()
+    if not pid_path.exists():
+        logger.warning("Daemon PID file not found")
+        return
+
+    try:
+        pid_str = pid_path.read_text().strip()
+        pid = int(pid_str)
+
+        if sys.platform == "win32":
+            import psutil
+
+            proc = psutil.Process(pid)
+            proc.terminate()
+        else:
+            os.kill(pid, signal.SIGTERM)
+
+        logger.info("Sent SIGTERM to daemon PID %d", pid)
+    except (ValueError, OSError, ProcessLookupError) as e:
+        logger.warning("Failed to stop daemon: %s", e)
+
+
+def _find_vcc_executable_static() -> str | None:
+    """Find the vcc executable (static version for module-level functions)."""
+    python_dir = Path(sys.executable).parent
+    names = ["vcc.exe", "vcc"] if sys.platform == "win32" else ["vcc"]
+    for name in names:
+        vcc = python_dir / name
+        if vcc.exists():
+            return str(vcc)
+    return None
+
+
+def _wait_for_daemon(proc: subprocess.Popen | None = None, timeout: float = 30.0) -> None:
+    """Wait for the daemon to become ready.
+
+    Args:
+        proc: The subprocess.Popen object (optional, for early exit detection).
+        timeout: Maximum time to wait in seconds.
+    """
+    start = time.monotonic()
+    client = DaemonClient()
+
+    while time.monotonic() - start < timeout:
+        if proc and proc.poll() is not None:
+            raise RuntimeError("Daemon process exited before becoming ready")
+
+        try:
+            result = asyncio.run(client._call(METHOD_PING, {}, timeout=1.0))
+            if result.get("pong"):
+                logger.info("Daemon is ready")
+                return
+        except Exception:
+            pass
+
+        time.sleep(0.2)
+
+    raise RuntimeError(f"Daemon did not become ready within {timeout}s")

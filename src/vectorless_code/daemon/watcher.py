@@ -8,17 +8,23 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 logger = logging.getLogger(__name__)
 
 # Source file extensions to monitor
 SOURCE_EXTENSIONS = {
     # Python
-    ".py", ".pyi",
+    ".py",
+    ".pyi",
     # JavaScript/TypeScript
-    ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs",
+    ".js",
+    ".jsx",
+    ".ts",
+    ".tsx",
+    ".mjs",
+    ".cjs",
     # Rust
     ".rs",
     # Go
@@ -26,15 +32,25 @@ SOURCE_EXTENSIONS = {
     # Java
     ".java",
     # C/C++
-    ".c", ".h", ".cpp", ".hpp", ".cc", ".cxx",
+    ".c",
+    ".h",
+    ".cpp",
+    ".hpp",
+    ".cc",
+    ".cxx",
     # Ruby
     ".rb",
     # Kotlin
-    ".kt", ".kts",
+    ".kt",
+    ".kts",
     # Scala
     ".scala",
     # Others
-    ".php", ".sh", ".bash", ".lua", ".sql",
+    ".php",
+    ".sh",
+    ".bash",
+    ".lua",
+    ".sql",
 }
 
 
@@ -149,8 +165,7 @@ class FileWatcher:
             from watchdog.observers import Observer
         except ImportError:
             logger.error(
-                "watchdog not installed. File watching disabled. "
-                "Install with: pip install watchdog"
+                "watchdog not installed. File watching disabled. Install with: pip install watchdog"
             )
             return
 

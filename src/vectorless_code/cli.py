@@ -6,26 +6,26 @@ import asyncio
 import functools
 import logging
 import os
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeVar
 
 import typer
 
-from vectorless_code import __version__
-
-logger = logging.getLogger(__name__)
-from vectorless_code.daemon_client import DaemonStartError, is_daemon_running, start_daemon, stop_daemon
 from vectorless_code.daemon.protocol import (
     DoctorCheckResult,
     IndexingProgress,
     ProjectStatusResponse,
     SearchResponse,
 )
+from vectorless_code.daemon_client import (
+    DaemonStartError,
+    is_daemon_running,
+    start_daemon,
+    stop_daemon,
+)
 from vectorless_code.settings import (
     add_to_gitignore,
-    data_dir,
     find_project_root,
     load_user_settings,
     normalize_path,
@@ -34,6 +34,8 @@ from vectorless_code.settings import (
     save_user_settings,
     settings_path,
 )
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="vcc",
@@ -203,7 +205,13 @@ def _run_index_with_progress(project_root: str) -> None:
 
         try:
             client = DaemonClient()
-            resp = asyncio.run(client.index(project_root, on_progress=_on_progress_async, on_waiting=_on_waiting_async))
+            resp = asyncio.run(
+                client.index(
+                    project_root,
+                    on_progress=_on_progress_async,
+                    on_waiting=_on_waiting_async,
+                )
+            )
         except RuntimeError as e:
             live.stop()
             if isinstance(e, DaemonStartError):
@@ -214,14 +222,14 @@ def _run_index_with_progress(project_root: str) -> None:
     if last_progress_line is not None:
         typer.echo(last_progress_line, err=True)
 
-    if not resp.get('success', False):
+    if not resp.get("success", False):
         typer.echo(f"Indexing failed: {resp.get('message', 'Unknown error')}", err=True)
         raise typer.Exit(code=1)
 
     typer.echo(f"Files:  {resp.get('file_count', 0)}")
     typer.echo(f"Lines:  {resp.get('total_lines', 0)}")
     typer.echo(f"Size:   {resp.get('total_bytes', 0)} bytes")
-    languages = resp.get('languages', {})
+    languages = resp.get("languages", {})
     if languages:
         typer.echo("Languages:")
         for lang, count in sorted(languages.items(), key=lambda x: -x[1]):
@@ -253,14 +261,16 @@ def _search_with_wait_spinner(
             )
 
         client = DaemonClient()
-        resp = asyncio.run(client.search(
-            project_root=project_root,
-            query=query,
-            doc_ids=doc_ids,
-            limit=limit,
-            offset=offset,
-            on_waiting=_on_waiting_async,
-        ))
+        resp = asyncio.run(
+            client.search(
+                project_root=project_root,
+                query=query,
+                doc_ids=doc_ids,
+                limit=limit,
+                offset=offset,
+                on_waiting=_on_waiting_async,
+            )
+        )
 
     return resp
 
@@ -355,18 +365,18 @@ def status() -> None:
     try:
         client = DaemonClient()
         resp = asyncio.run(client.project_status(project_root))
-        
+
         # Adapt dictionary response to ProjectStatusResponse or handle directly
         # Assuming the daemon returns a dict that can be unpacked or handled
         # If strict typing is needed, we might construct ProjectStatusResponse if fields match
         # For now, printing basic info based on typical status response
-        
-        if resp.get('indexed', False):
+
+        if resp.get("indexed", False):
             typer.echo("Status: Indexed")
             typer.echo(f"Files:  {resp.get('file_count', 0)}")
             typer.echo(f"Nodes:  {resp.get('node_count', 0)}")
             typer.echo(f"Size:   {resp.get('total_bytes', 0)} bytes")
-            if 'last_modified' in resp:
+            if "last_modified" in resp:
                 typer.echo(f"Last modified: {resp['last_modified']}")
         else:
             typer.echo("Status: Not indexed")
@@ -411,10 +421,10 @@ def reset(
             raise typer.Exit(code=0)
 
     # Remove project from daemon first
+    # Note: The new daemon doesn't have a remove_project method
+    # Projects are automatically unloaded when the daemon stops
     try:
-        from vectorless_code import client as _client
-
-        _client.remove_project(str(project_root))
+        pass
     except (ConnectionRefusedError, OSError, RuntimeError):
         pass
 
@@ -482,44 +492,24 @@ def _ok_fail_tag(ok: bool) -> str:
 @_catch_daemon_start_error
 def doctor() -> None:
     """Check system health and report issues."""
-    from vectorless_code import client as _client
-    from vectorless_code.settings import load_user_settings as _load_user_settings
-
     _print_section("User Settings")
     user_settings_path, _ = require_user_settings()
     typer.echo(f"  Settings: {user_settings_path}")
 
     _print_section("Daemon")
-    daemon_ok = False
     try:
         from vectorless_code.daemon_client import DaemonClient
+
         client = DaemonClient()
         st_dict = asyncio.run(client.daemon_status())
         # Construct a simple object or access dict keys
         # Assuming st_dict has version, uptime_seconds, projects
         typer.echo(f"  Version: {st_dict.get('version', 'unknown')}")
         typer.echo(f"  Uptime: {st_dict.get('uptime_seconds', 0):.1f}s")
-        projects = st_dict.get('projects', [])
+        projects = st_dict.get("projects", [])
         typer.echo(f"  Loaded projects: {len(projects)}")
-        daemon_ok = True
     except Exception as e:
         _print_error(f"Cannot connect to daemon: {e}")
-
-    if daemon_ok:
-        try:
-            client = DaemonClient()
-            env_resp_dict = asyncio.run(client.daemon_env())
-            path_mappings = env_resp_dict.get('path_mappings', [])
-            if path_mappings:
-                typer.echo("  Path mappings:")
-                for m in path_mappings:
-                    # m might be a dict or object depending on daemon protocol serialization
-                    if isinstance(m, dict):
-                        typer.echo(f"    {m.get('source')} → {m.get('target')}")
-                    else:
-                        typer.echo(f"    {m.source} → {m.target}")
-        except Exception as e:
-            _print_error(f"Failed to get daemon env: {e}")
 
     project_root = find_project_root(Path.cwd())
 
@@ -527,20 +517,6 @@ def doctor() -> None:
         _print_section("Project Settings")
         ps_path = settings_path(project_root)
         typer.echo(f"  Settings: {ps_path}")
-
-        if daemon_ok:
-            try:
-                client = DaemonClient()
-                
-                async def _on_result_async(result_data: dict) -> None:
-                    _print_doctor_result(DoctorCheckResult(**result_data))
-
-                await client.doctor(
-                    project_root=str(project_root),
-                    on_result=_on_result_async,
-                )
-            except Exception as e:
-                _print_error(f"Project checks failed: {e}")
 
     _print_section("Log Files")
     from vectorless_code.daemon_paths import daemon_log_path as _daemon_log_path
@@ -557,10 +533,17 @@ def mcp() -> None:
     project_root = str(require_project_root())
 
     async def _run_mcp() -> None:
+        from vectorless_code.daemon_client import DaemonClient
         from vectorless_code.server import create_mcp_server
-        from vectorless_code.client import _bg_index
 
-        asyncio.create_task(_bg_index(project_root))
+        # The daemon handles auto-indexing through file watching
+        # Just ensure the project is compiled
+        client = DaemonClient()
+        try:
+            await client.index(project_root)
+        except Exception as e:
+            logger.warning("Failed to index project: %s", e)
+
         mcp_server = create_mcp_server(project_root)
         await mcp_server.run_stdio_async()
 
@@ -580,17 +563,17 @@ def daemon_status() -> None:
 
     client = DaemonClient()
     resp_dict = asyncio.run(client.daemon_status())
-    
+
     typer.echo(f"Daemon version: {resp_dict.get('version', 'unknown')}")
     typer.echo(f"Uptime: {resp_dict.get('uptime_seconds', 0):.1f}s")
-    projects = resp_dict.get('projects', [])
+    projects = resp_dict.get("projects", [])
     if projects:
         typer.echo("Projects:")
         for p in projects:
             # p might be dict or object
             if isinstance(p, dict):
-                root = p.get('project_root', 'unknown')
-                indexing = p.get('indexing', False)
+                root = p.get("project_root", "unknown")
+                indexing = p.get("indexing", False)
             else:
                 root = p.project_root
                 indexing = p.indexing
@@ -604,7 +587,7 @@ def daemon_status() -> None:
 @_catch_daemon_start_error
 def daemon_restart() -> None:
     """Restart the daemon."""
-    from vectorless_code.client import _wait_for_daemon
+    from vectorless_code.daemon_client import _wait_for_daemon
 
     typer.echo("Stopping daemon...")
     stop_daemon()
@@ -619,7 +602,6 @@ def daemon_restart() -> None:
 def daemon_stop() -> None:
     """Stop the daemon."""
     from vectorless_code.daemon_paths import daemon_pid_path
-    from vectorless_code.client import is_daemon_running
 
     pid_path = daemon_pid_path()
     if not pid_path.exists() and not is_daemon_running():
@@ -645,7 +627,7 @@ def daemon_stop() -> None:
 @app.command("run-daemon", hidden=True)
 def run_daemon_cmd() -> None:
     """Internal: run the daemon process."""
-    from vectorless_code.daemon import run_daemon
+    from vectorless_code.daemon.server import run_daemon
 
     run_daemon()
 

@@ -8,15 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
-from pathlib import Path
 
-from vectorless_code._daemon_paths import (
+from vectorless_code._version import __version__
+from vectorless_code.daemon.core import Daemon
+from vectorless_code.daemon_paths import (
     daemon_pid_path,
     daemon_runtime_dir,
 )
-from vectorless_code._version import __version__
-from vectorless_code.daemon.core import Daemon
 
 # Set up logging
 logging.basicConfig(
@@ -89,4 +87,5 @@ def run_daemon() -> None:
 # For direct execution
 if __name__ == "__main__":
     import threading  # noqa: F401 (needed for os._exit check)
+
     run_daemon()
