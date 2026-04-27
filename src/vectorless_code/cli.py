@@ -3,9 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 import typer
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(name)s: %(message)s",
+)
 
 from vectorless_code import __version__
 from vectorless_code.settings import (
